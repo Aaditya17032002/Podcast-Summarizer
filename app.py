@@ -1,0 +1,290 @@
+import os
+import streamlit as st
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
+from deep_translator import GoogleTranslator
+from fpdf import FPDF
+import re
+import google.generativeai as genai
+import json
+import smtplib
+from email.message import EmailMessage
+
+# Load API key from JSON file
+def load_api_key():
+    with open('config.json', 'r') as f:
+        config = json.load(f)
+    return config.get('GEMINI_API_KEY')
+
+API_KEY = load_api_key()
+
+# Configure the Generative AI client
+genai.configure(api_key=API_KEY)
+
+# Function to extract the video ID from a YouTube URL
+def extract_video_id(yt_url):
+    video_id_match = re.search(r"v=([^&]+)", yt_url)
+    if video_id_match:
+        return video_id_match.group(1)
+    else:
+        st.error("Invalid YouTube URL. Please provide a valid URL.")
+        return None
+
+# Function to download transcript using youtube_transcript_api
+def download_transcript(video_id):
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript_text = " ".join([entry['text'] for entry in transcript])
+        return transcript_text
+    except NoTranscriptFound:
+        st.error("No transcript found for this video.")
+        return None
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        return None
+
+# Function to translate text if needed
+def translate_text(text, target_lang='en'):
+    translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
+    return translated
+
+# Function to generate summary using Gemini
+def generate_summary(transcript, user_info=None):
+    if user_info:
+        prompt = (f"Summarize the following podcast transcript from the perspective of someone with the following background and goals:\n"
+                  f"Field: {user_info['field']}\nBackground: {user_info['background']}\nFuture Plans: {user_info['plans']}\n\n"
+                  f"Transcript:\n\n{transcript}\n\n"
+                  f"Provide: a brief summary, quick lessons, dos and don'ts, key pointers and takeaways, any special mentions or quotes.")
+    else:
+        prompt = (f"Summarize the following podcast transcript.\n\nTranscript:\n\n{transcript}\n\n"
+                  f"Provide: a brief summary, quick lessons, dos and don'ts, key pointers and takeaways, any special mentions or quotes.")
+    
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    response = model.generate_content(prompt)
+    
+    # Example output parsing - adjust based on actual response format
+    return {
+        'summary': response.text,  # Adjust as needed based on actual API response
+        'quick_lessons': [],  # Populate these lists based on actual content
+        'dos': [],
+        'donts': [],
+        'key_pointers': [],
+        'special_mentions': []
+    }
+
+def clean_text(text):
+    """
+    Clean up the text by replacing common punctuation marks.
+    """
+    replacements = {
+        '“': '"',
+        '”': '"',
+        '‘': "'",
+        '’': "'",
+        '—': '-',
+        '–': '-',
+        '…': '...',
+        '**': ''  # Ensure that ** is removed from text
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text.strip()
+
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 12)
+        self.cell(0, 10, 'NeuralBee - Podcast Summarizer', 0, 1, 'C')
+        self.ln(5)  # Reduced line space after the header
+
+    def chapter_title(self, title):
+        self.set_font('Arial', 'B', 14)
+        self.cell(0, 10, clean_text(title), 0, 1, 'C')
+        self.ln(5)
+
+    def chapter_body(self, body):
+        self.set_font('Arial', '', 12)
+        self.multi_cell(0, 10, clean_text(body))  # Adjusted for multi-line text handling
+        self.ln(2)  # Minimized space after paragraphs
+
+    def add_bold_left(self, content):
+        self.set_font('Arial', 'B', 12)
+        self.multi_cell(0, 10, clean_text(content))
+        self.ln(2)  # Minimized space after bold text
+
+    def add_numbered_bullets(self, items):
+        self.set_font('Arial', '', 12)
+        for idx, item in enumerate(items, start=1):
+            self.multi_cell(0, 10, f"{idx}. {clean_text(item)}")
+        self.ln(2)  # Minimized space after bullets
+
+    def add_special_mentions(self, items):
+        self.set_font('Arial', '', 12)
+        for idx, item in enumerate(items, start=1):
+            self.multi_cell(0, 10, f"{idx}. {clean_text(item)}")
+        self.ln(2)  # Minimized space after special mentions
+
+def create_pdf(summary, filename="podcast_summary.pdf"):
+    pdf = PDF()
+    pdf.add_page()
+
+    content = summary.get('summary', '')
+    lines = content.split('\n')
+
+    bullet_items = []
+    special_mentions = []
+    in_bullet_section = False
+    in_special_mentions = False
+
+    for line in lines:
+        line = line.strip()
+        
+        # Match headers starting with ##
+        if re.match(r'^##', line):
+            if in_bullet_section:
+                pdf.add_numbered_bullets(bullet_items)
+                bullet_items = []
+                in_bullet_section = False
+            if in_special_mentions:
+                pdf.add_special_mentions(special_mentions)
+                special_mentions = []
+                in_special_mentions = False
+            title = line[2:].strip()
+            pdf.chapter_title(title)
+        
+        # Match bold text and remove surrounding **
+        elif re.match(r'^\*\*.*\*\*$', line):
+            if in_bullet_section:
+                pdf.add_numbered_bullets(bullet_items)
+                bullet_items = []
+                in_bullet_section = False
+            if in_special_mentions:
+                pdf.add_special_mentions(special_mentions)
+                special_mentions = []
+                in_special_mentions = False
+            bold_text = line[2:-2].strip()  # Remove surrounding **
+            pdf.add_bold_left(bold_text)
+        
+        # Match special mentions starting with * **
+        elif re.match(r'^\* \*\*', line):
+            if not in_special_mentions:
+                in_special_mentions = True
+            special_mention_text = line[4:].strip()  # Remove * ** at the beginning
+            special_mentions.append(special_mention_text)
+        
+        # Match bullet items starting with * without **
+        elif re.match(r'^\* [^\*]', line):
+            if not in_bullet_section:
+                in_bullet_section = True
+            bullet_text = line[1:].strip()  # Remove * at the beginning
+            if bullet_text.endswith('**'):
+                bullet_text = bullet_text[:-2].strip()  # Remove trailing **
+            bullet_items.append(bullet_text)
+        
+        # Regular paragraph text
+        else:
+            if in_bullet_section:
+                pdf.add_numbered_bullets(bullet_items)
+                bullet_items = []
+                in_bullet_section = False
+            if in_special_mentions:
+                pdf.add_special_mentions(special_mentions)
+                special_mentions = []
+                in_special_mentions = False
+            pdf.chapter_body(line)
+
+    # Handle any remaining bullet items
+    if bullet_items:
+        pdf.add_numbered_bullets(bullet_items)
+    
+    # Handle any remaining special mentions
+    if special_mentions:
+        pdf.add_special_mentions(special_mentions)
+
+    # Add additional content
+    pdf.chapter_title('Generated By Neural Bee')
+
+    pdf.output(filename)
+
+# Function to send email with attachment
+def send_email(to_email, pdf_filename):
+    from_email = 'adityajangam25@gmail.com'  # Replace with your Gmail address
+    from_password = 'oucm rdfi triv cabd'  # Replace with your App Password
+
+    msg = EmailMessage()
+    msg['Subject'] = 'Your Podcast Summary PDF'
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg.set_content('Please find attached the PDF summarizing the podcast you requested.')
+
+    with open(pdf_filename, 'rb') as pdf_file:
+        pdf_data = pdf_file.read()
+        msg.add_attachment(pdf_data, maintype='application', subtype='pdf', filename=pdf_filename)
+
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:  # Gmail's SMTP server
+            server.starttls()
+            server.login(from_email, from_password)
+            server.send_message(msg)
+    except Exception as e:
+        st.error(f"An error occurred while sending email: {str(e)}")
+
+# Function to store emails in a JSON file
+def store_email(email):
+    try:
+        if os.path.exists('emails.json'):
+            with open('emails.json', 'r') as f:
+                email_list = json.load(f)
+        else:
+            email_list = []
+
+        email_list.append(email)
+
+        with open('emails.json', 'w') as f:
+            json.dump(email_list, f, indent=4)
+    except Exception as e:
+        st.error(f"An error occurred while storing email: {str(e)}")
+
+# Streamlit App
+st.title("YouTube Podcast Summary Generator")
+
+yt_url = st.text_input("Enter YouTube URL:")
+user_info = {}
+personalization = st.checkbox("Personalize the summary based on your field, background, and future plans")
+
+if personalization:
+    user_info['field'] = st.text_input("Your Current Field:")
+    user_info['background'] = st.text_input("Your Background:")
+    user_info['plans'] = st.text_input("Your Future Plans:")
+
+email = st.text_input("Enter your email address:")
+email_valid = st.text_input("Confirm your email address:")
+
+if st.button("Generate Summary"):
+    if email != email_valid:
+        st.error("Emails do not match. Please check and try again.")
+    elif not email:
+        st.error("Please enter your email address.")
+    else:
+        video_id = extract_video_id(yt_url)
+        if video_id:
+            with st.spinner("Downloading transcript..."):
+                transcript = download_transcript(video_id)
+            
+            if transcript:
+                # Determine if translation is needed
+                if not transcript.isascii():  # Checks if transcript contains non-ASCII characters
+                    st.write("Translating transcript...")
+                    transcript = translate_text(transcript)
+            
+                with st.spinner("Generating summary..."):
+                    summary = generate_summary(transcript, user_info if personalization else None)
+            
+                with st.spinner("Creating PDF..."):
+                    create_pdf(summary)
+                
+                # Store email and send PDF
+                store_email(email)
+                send_email(email, "podcast_summary.pdf")
+                
+                st.success("Summary generated and sent successfully to your email!")
+        else:
+            st.error("Could not retrieve transcript. Please check the URL and try again.")
