@@ -55,7 +55,7 @@ def find_working_proxy():
             return proxy
     return None
 
-working_proxy = find_working_proxy(PROXY_LIST)
+working_proxy = find_working_proxy()
 
 if working_proxy:
     set_proxy(working_proxy)
