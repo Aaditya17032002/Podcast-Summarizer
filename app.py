@@ -2,8 +2,8 @@ import os
 import re
 import json
 import smtplib
+import subprocess
 import streamlit as st
-from yt2text import get_text  # Import the get_text function from yt2text
 from deep_translator import GoogleTranslator
 from fpdf import FPDF
 from email.message import EmailMessage
@@ -37,13 +37,33 @@ def extract_video_id(yt_url):
         st.error("Invalid YouTube URL. Please provide a valid URL.")
         return None
 
-# Function to download transcript using yt2text
+# Function to download transcript using yt-dlp
 def download_transcript(video_url):
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        return None
+
+    # Define paths
+    vtt_file_path = f"{video_id}.en.vtt"
+
+    # Run yt-dlp to download the captions
     try:
-        transcript_text = get_text(video_url)
-        return transcript_text
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
+        subprocess.run(['yt-dlp', '--write-auto-captions', '--skip-download', '--no-post-overwrites', video_url], check=True)
+    except subprocess.CalledProcessError as e:
+        st.error(f"An error occurred while running yt-dlp: {str(e)}")
+        return None
+
+    # Convert VTT to plain text
+    if os.path.exists(vtt_file_path):
+        with open(vtt_file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+
+        # Remove VTT metadata and timing information
+        content = re.sub(r'^\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\n', '', content, flags=re.MULTILINE)
+        content = re.sub(r'\n\n+', '\n\n', content).strip()  # Normalize new lines
+        return content
+    else:
+        st.error(f"Caption file {vtt_file_path} not found.")
         return None
 
 # Function to translate text if needed
