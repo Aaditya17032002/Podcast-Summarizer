@@ -1,5 +1,5 @@
 streamlit==1.38.0
-youtube-transcript-api==0.6.0
+youtube-caption-downloader
 deep-translator==1.10.0
 fpdf==1.7.2
 google-generativeai==0.1.0
