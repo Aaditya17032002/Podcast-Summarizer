@@ -48,7 +48,8 @@ def download_transcript(video_url):
 
     # Run yt-dlp to download the captions
     try:
-        subprocess.run(['yt-dlp', '--write-auto-captions', '--skip-download', '--no-post-overwrites', video_url], check=True)
+        subprocess.run(['yt-dlp', '--write-auto-captions', '--skip-download', '--no-post-overwrites',
+            '--sub-lang', 'en', video_url], check=True)
     except subprocess.CalledProcessError as e:
         st.error(f"An error occurred while running yt-dlp: {str(e)}")
         return None
