@@ -1,24 +1,32 @@
 import os
+import re
+import json
+import smtplib
 import streamlit as st
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
 from deep_translator import GoogleTranslator
 from fpdf import FPDF
-import re
-import google.generativeai as genai
-import json
-import smtplib
 from email.message import EmailMessage
+import google.generativeai as genai
 
 # Load API key from JSON file
 def load_api_key():
-    with open('config.json', 'r') as f:
-        config = json.load(f)
-    return config.get('GEMINI_API_KEY')
+    try:
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+        return config.get('GEMINI_API_KEY')
+    except FileNotFoundError:
+        st.error("Config file not found. Please ensure 'config.json' is present.")
+        return None
+    except json.JSONDecodeError:
+        st.error("Error decoding config file. Please ensure 'config.json' is properly formatted.")
+        return None
 
 API_KEY = load_api_key()
 
-# Configure the Generative AI client
-genai.configure(api_key=API_KEY)
+if API_KEY:
+    # Configure the Generative AI client
+    genai.configure(api_key=API_KEY)
 
 # Function to extract the video ID from a YouTube URL
 def extract_video_id(yt_url):
@@ -44,8 +52,12 @@ def download_transcript(video_id):
 
 # Function to translate text if needed
 def translate_text(text, target_lang='en'):
-    translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
-    return translated
+    try:
+        translated = GoogleTranslator(source='auto', target=target_lang).translate(text)
+        return translated
+    except Exception as e:
+        st.error(f"Translation error: {str(e)}")
+        return text
 
 # Function to generate summary using Gemini
 def generate_summary(transcript, user_info=None):
@@ -58,23 +70,22 @@ def generate_summary(transcript, user_info=None):
         prompt = (f"Summarize the following podcast transcript.\n\nTranscript:\n\n{transcript}\n\n"
                   f"Provide: a brief summary, quick lessons, dos and don'ts, key pointers and takeaways, any special mentions or quotes.")
     
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    response = model.generate_content(prompt)
-    
-    # Example output parsing - adjust based on actual response format
-    return {
-        'summary': response.text,  # Adjust as needed based on actual API response
-        'quick_lessons': [],  # Populate these lists based on actual content
-        'dos': [],
-        'donts': [],
-        'key_pointers': [],
-        'special_mentions': []
-    }
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return {
+            'summary': response.text,  # Adjust as needed based on actual API response
+            'quick_lessons': [],  # Populate these lists based on actual content
+            'dos': [],
+            'donts': [],
+            'key_pointers': [],
+            'special_mentions': []
+        }
+    except Exception as e:
+        st.error(f"Error generating summary: {str(e)}")
+        return {}
 
 def clean_text(text):
-    """
-    Clean up the text by replacing common punctuation marks.
-    """
     replacements = {
         '“': '"',
         '”': '"',
@@ -215,11 +226,11 @@ def send_email(to_email, pdf_filename):
     msg['To'] = to_email
     msg.set_content('Please find attached the PDF summarizing the podcast you requested.')
 
-    with open(pdf_filename, 'rb') as pdf_file:
-        pdf_data = pdf_file.read()
-        msg.add_attachment(pdf_data, maintype='application', subtype='pdf', filename=pdf_filename)
-
     try:
+        with open(pdf_filename, 'rb') as pdf_file:
+            pdf_data = pdf_file.read()
+            msg.add_attachment(pdf_data, maintype='application', subtype='pdf', filename=pdf_filename)
+
         with smtplib.SMTP('smtp.gmail.com', 587) as server:  # Gmail's SMTP server
             server.starttls()
             server.login(from_email, from_password)
@@ -278,13 +289,16 @@ if st.button("Generate Summary"):
                 with st.spinner("Generating summary..."):
                     summary = generate_summary(transcript, user_info if personalization else None)
             
-                with st.spinner("Creating PDF..."):
-                    create_pdf(summary)
-                
-                # Store email and send PDF
-                store_email(email)
-                send_email(email, "podcast_summary.pdf")
-                
-                st.success("Summary generated and sent successfully to your email!")
+                if summary:
+                    with st.spinner("Creating PDF..."):
+                        create_pdf(summary)
+                    
+                    # Store email and send PDF
+                    store_email(email)
+                    send_email(email, "podcast_summary.pdf")
+                    
+                    st.success("Summary generated and sent successfully to your email!")
+                else:
+                    st.error("Failed to generate summary.")
         else:
             st.error("Could not retrieve transcript. Please check the URL and try again.")
