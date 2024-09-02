@@ -2,12 +2,13 @@ import os
 import re
 import json
 import smtplib
-import subprocess
 import streamlit as st
 from deep_translator import GoogleTranslator
 from fpdf import FPDF
 from email.message import EmailMessage
 import google.generativeai as genai
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import SRTFormatter
 
 # Load API key from JSON file
 def load_api_key():
@@ -37,34 +38,15 @@ def extract_video_id(yt_url):
         st.error("Invalid YouTube URL. Please provide a valid URL.")
         return None
 
-# Function to download transcript using yt-dlp
-def download_transcript(video_url):
-    video_id = extract_video_id(video_url)
-    if not video_id:
-        return None
-
-    # Define paths
-    vtt_file_path = f"{video_id}.en.vtt"
-
-    # Run yt-dlp to download the captions
+# Function to get transcript using youtube_transcript_api
+def get_transcript(video_id):
     try:
-        subprocess.run(['yt-dlp', '--write-auto-captions', '--skip-download', '--no-post-overwrites',
-            '--sub-lang', 'en', video_url], check=True)
-    except subprocess.CalledProcessError as e:
-        st.error(f"An error occurred while running yt-dlp: {str(e)}")
-        return None
-
-    # Convert VTT to plain text
-    if os.path.exists(vtt_file_path):
-        with open(vtt_file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-
-        # Remove VTT metadata and timing information
-        content = re.sub(r'^\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\n', '', content, flags=re.MULTILINE)
-        content = re.sub(r'\n\n+', '\n\n', content).strip()  # Normalize new lines
-        return content
-    else:
-        st.error(f"Caption file {vtt_file_path} not found.")
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+        formatter = SRTFormatter()
+        srt_transcript = formatter.format_transcript(transcript)
+        return srt_transcript
+    except Exception as e:
+        st.error(f"An error occurred while fetching transcript: {str(e)}")
         return None
 
 # Function to translate text if needed
@@ -262,32 +244,34 @@ st.title('Podcast Summarizer')
 yt_url = st.text_input('Enter YouTube URL:')
 
 if yt_url:
-    transcript_text = download_transcript(yt_url)
-    if transcript_text:
-        st.subheader('Transcript')
-        st.write(transcript_text)
+    video_id = extract_video_id(yt_url)
+    if video_id:
+        transcript_text = get_transcript(video_id)
+        if transcript_text:
+            st.subheader('Transcript')
+            st.write(transcript_text)
 
-        # Optionally translate transcript
-        target_lang = st.selectbox('Translate to:', ['en', 'es', 'fr', 'de'])
-        translated_text = translate_text(transcript_text, target_lang)
-        st.subheader('Translated Transcript')
-        st.write(translated_text)
+            # Optionally translate transcript
+            target_lang = st.selectbox('Translate to:', ['en', 'es', 'fr', 'de'])
+            translated_text = translate_text(transcript_text, target_lang)
+            st.subheader('Translated Transcript')
+            st.write(translated_text)
 
-        # Generate summary
-        user_info = {
-            'field': st.text_input('Field:'),
-            'background': st.text_input('Background:'),
-            'plans': st.text_input('Future Plans:')
-        }
-        
-        if st.button('Generate Summary'):
-            summary = generate_summary(translated_text, user_info)
-            if summary:
-                pdf_filename = 'podcast_summary.pdf'
-                create_pdf(summary, pdf_filename)
-                st.success('PDF created successfully!')
+            # Generate summary
+            user_info = {
+                'field': st.text_input('Field:'),
+                'background': st.text_input('Background:'),
+                'plans': st.text_input('Future Plans:')
+            }
+            
+            if st.button('Generate Summary'):
+                summary = generate_summary(translated_text, user_info)
+                if summary:
+                    pdf_filename = 'podcast_summary.pdf'
+                    create_pdf(summary, pdf_filename)
+                    st.success('PDF created successfully!')
 
-                # Send email with PDF attachment
-                email_address = st.text_input('Enter your email to receive the PDF:')
-                if email_address and st.button('Send Email'):
-                    send_email(email_address, pdf_filename)
+                    # Send email with PDF attachment
+                    email_address = st.text_input('Enter your email to receive the PDF:')
+                    if email_address and st.button('Send Email'):
+                        send_email(email_address, pdf_filename)
