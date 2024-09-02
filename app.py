@@ -3,7 +3,7 @@ import re
 import json
 import smtplib
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
+from youtube_caption_downloader import YouTubeCaptionDownloader
 from deep_translator import GoogleTranslator
 from fpdf import FPDF
 from email.message import EmailMessage
@@ -37,15 +37,12 @@ def extract_video_id(yt_url):
         st.error("Invalid YouTube URL. Please provide a valid URL.")
         return None
 
-# Function to download transcript using youtube_transcript_api
+# Function to download transcript using youtube_caption_downloader
 def download_transcript(video_id):
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        transcript_text = " ".join([entry['text'] for entry in transcript])
-        return transcript_text
-    except NoTranscriptFound:
-        st.error("No transcript found for this video.")
-        return None
+        downloader = YouTubeCaptionDownloader()
+        captions = downloader.get_caption(video_id, lang='en')
+        return captions
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         return None
