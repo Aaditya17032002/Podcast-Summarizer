@@ -3,7 +3,7 @@ import re
 import json
 import smtplib
 import streamlit as st
-from pytube import YouTube
+from yt2text import get_text  # Import the get_text function from yt2text
 from deep_translator import GoogleTranslator
 from fpdf import FPDF
 from email.message import EmailMessage
@@ -37,16 +37,11 @@ def extract_video_id(yt_url):
         st.error("Invalid YouTube URL. Please provide a valid URL.")
         return None
 
-# Function to download transcript using pytube
+# Function to download transcript using yt2text
 def download_transcript(video_url):
     try:
-        yt = YouTube(video_url)
-        caption = yt.captions.get_by_language_code('en')
-        if caption:
-            return caption.generate_srt_captions()
-        else:
-            st.error("No caption found for this video.")
-            return None
+        transcript_text = get_text(video_url, model="medium", verbose=True)
+        return transcript_text
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         return None
@@ -236,70 +231,42 @@ def send_email(to_email, pdf_filename):
             server.starttls()
             server.login(from_email, from_password)
             server.send_message(msg)
+        st.success('Email sent successfully!')
     except Exception as e:
-        st.error(f"An error occurred while sending email: {str(e)}")
+        st.error(f"Error sending email: {str(e)}")
 
-# Function to store emails in a JSON file
-def store_email(email):
-    try:
-        if os.path.exists('emails.json'):
-            with open('emails.json', 'r') as f:
-                email_list = json.load(f)
-        else:
-            email_list = []
+# Streamlit app layout
+st.title('Podcast Summarizer')
 
-        email_list.append(email)
+yt_url = st.text_input('Enter YouTube URL:')
 
-        with open('emails.json', 'w') as f:
-            json.dump(email_list, f, indent=4)
-    except Exception as e:
-        st.error(f"An error occurred while storing email: {str(e)}")
+if yt_url:
+    transcript_text = download_transcript(yt_url)
+    if transcript_text:
+        st.subheader('Transcript')
+        st.write(transcript_text)
 
-# Streamlit App
-st.title("YouTube Podcast Summary Generator")
+        # Optionally translate transcript
+        target_lang = st.selectbox('Translate to:', ['en', 'es', 'fr', 'de'])
+        translated_text = translate_text(transcript_text, target_lang)
+        st.subheader('Translated Transcript')
+        st.write(translated_text)
 
-yt_url = st.text_input("Enter YouTube URL:")
-user_info = {}
-personalization = st.checkbox("Personalize the summary based on your field, background, and future plans")
+        # Generate summary
+        user_info = {
+            'field': st.text_input('Field:'),
+            'background': st.text_input('Background:'),
+            'plans': st.text_input('Future Plans:')
+        }
+        
+        if st.button('Generate Summary'):
+            summary = generate_summary(translated_text, user_info)
+            if summary:
+                pdf_filename = 'podcast_summary.pdf'
+                create_pdf(summary, pdf_filename)
+                st.success('PDF created successfully!')
 
-if personalization:
-    user_info['field'] = st.text_input("Your Current Field:")
-    user_info['background'] = st.text_input("Your Background:")
-    user_info['plans'] = st.text_input("Your Future Plans:")
-
-email = st.text_input("Enter your email address:")
-email_valid = st.text_input("Confirm your email address:")
-
-if st.button("Generate Summary"):
-    if email != email_valid:
-        st.error("Emails do not match. Please check and try again.")
-    elif not email:
-        st.error("Please enter your email address.")
-    else:
-        video_url = yt_url
-        if video_url:
-            with st.spinner("Downloading transcript..."):
-                transcript = download_transcript(video_url)
-            
-            if transcript:
-                # Determine if translation is needed
-                if not transcript.isascii():  # Checks if transcript contains non-ASCII characters
-                    st.write("Translating transcript...")
-                    transcript = translate_text(transcript)
-            
-                with st.spinner("Generating summary..."):
-                    summary = generate_summary(transcript, user_info if personalization else None)
-            
-                if summary:
-                    with st.spinner("Creating PDF..."):
-                        create_pdf(summary)
-                    
-                    # Store email and send PDF
-                    store_email(email)
-                    send_email(email, "podcast_summary.pdf")
-                    
-                    st.success("Summary generated and sent successfully to your email!")
-                else:
-                    st.error("Failed to generate summary.")
-        else:
-            st.error("Could not retrieve transcript. Please check the URL and try again.")
+                # Send email with PDF attachment
+                email_address = st.text_input('Enter your email to receive the PDF:')
+                if email_address and st.button('Send Email'):
+                    send_email(email_address, pdf_filename)
