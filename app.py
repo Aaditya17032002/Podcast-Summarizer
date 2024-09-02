@@ -40,7 +40,7 @@ def extract_video_id(yt_url):
 # Function to download transcript using yt2text
 def download_transcript(video_url):
     try:
-        transcript_text = get_text(video_url, model="medium", verbose=True)
+        transcript_text = get_text(video_url)
         return transcript_text
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
