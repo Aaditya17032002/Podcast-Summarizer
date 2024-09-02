@@ -5,3 +5,5 @@ fpdf==1.7.2
 google-generativeai==0.1.0
 httpx>=0.15.0  # or a compatible version with httpcore
 httpcore==0.15.0
+pysocks 
+requests
