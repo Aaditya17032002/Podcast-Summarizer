@@ -9,6 +9,55 @@ from email.message import EmailMessage
 import google.generativeai as genai
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import SRTFormatter
+import socks
+import socket
+import requests  # Needed for testing proxies
+
+# Path to the proxy list file
+PROXY_FILE_PATH = 'proxies.txt'
+
+def load_proxies_from_file(file_path):
+    """ Load proxies from a file """
+    try:
+        with open(file_path, 'r') as file:
+            proxies = file.read().strip().split('\n')
+        return proxies
+    except FileNotFoundError:
+        st.error(f"Proxy file not found at {file_path}. Please ensure the file is present.")
+        return []
+
+def set_proxy(proxy):
+    """ Set the proxy for the SOCKS connection """
+    ip, port = proxy.split(':')
+    socks.set_default_proxy(socks.SOCKS5, ip, int(port))
+    socket.socket = socks.socksocket
+
+def test_proxy(proxy):
+    """ Test the proxy by making a simple request """
+    set_proxy(proxy)
+    try:
+        response = requests.get('https://www.google.com', timeout=5)
+        if response.status_code == 200:
+            return True
+    except requests.RequestException:
+        return False
+    return False
+
+def find_working_proxy(proxies):
+    """ Find a working proxy from the list """
+    for proxy in proxies:
+        if test_proxy(proxy):
+            return proxy
+    return None
+
+# Load proxies from file
+proxies = load_proxies_from_file(PROXY_FILE_PATH)
+working_proxy = find_working_proxy(proxies)
+
+if working_proxy:
+    set_proxy(working_proxy)
+else:
+    st.error("No working proxy found. Please check your proxy list.")
 
 # Load API key from JSON file
 def load_api_key():
