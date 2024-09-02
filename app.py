@@ -14,17 +14,22 @@ import socket
 import requests  # Needed for testing proxies
 
 # Path to the proxy list file
-PROXY_FILE_PATH = 'proxies.txt'
-
-def load_proxies_from_file(file_path):
-    """ Load proxies from a file """
-    try:
-        with open(file_path, 'r') as file:
-            proxies = file.read().strip().split('\n')
-        return proxies
-    except FileNotFoundError:
-        st.error(f"Proxy file not found at {file_path}. Please ensure the file is present.")
-        return []
+PROXY_LIST = [
+    "203.243.63.16:80",
+    "3.24.58.156:3128",
+    "95.217.104.21:24815",
+    "103.151.41.7:80",
+    "190.113.40.202:999",
+    "142.11.222.22:80",
+    "109.111.212.78:8080",
+    "191.97.16.160:999",
+    "102.216.69.176:8080",
+    "154.239.9.94:8080",
+    "107.178.9.186:8080",
+    "190.5.77.211:80",
+    "201.229.250.21:8080",
+    "146.59.243.214:80"
+]
 
 def set_proxy(proxy):
     """ Set the proxy for the SOCKS connection """
@@ -43,15 +48,13 @@ def test_proxy(proxy):
         return False
     return False
 
-def find_working_proxy(proxies):
+def find_working_proxy():
     """ Find a working proxy from the list """
-    for proxy in proxies:
+    for proxy in PROXY_LIST:
         if test_proxy(proxy):
             return proxy
     return None
 
-# Load proxies from file
-proxies = load_proxies_from_file(PROXY_FILE_PATH)
 working_proxy = find_working_proxy(proxies)
 
 if working_proxy:
